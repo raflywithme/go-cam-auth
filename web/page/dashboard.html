@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Cam Dashboard</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #111;
+            color: #eee;
+            margin: 20px;
+        }
+
+        button {
+            margin: 10px 10px 10px 0px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            max-width: 1000px;
+        }
+
+        .cam {
+            background: #000;
+            border: 1px solid #333;
+        }
+
+        .cam video {
+            width: 100%;
+            display: block;
+        }
+
+        .cam p {
+            margin: 4px 8px;
+            font-size: 12px;
+            color: #aaa;
+        }
+    </style>
+</head>
+
+<body>
+    <button onclick="startAll()">Start All</button>
+
+    <div class="grid">
+        <div class="cam">
+            <video id="video1" autoplay muted></video>
+            <p id="status1">not connect</p>
+        </div>
+        <div class="cam">
+            <video id="video2" autoplay muted></video>
+            <p id="status2">not connect</p>
+        </div>
+        <div class="cam">
+            <video id="video3" autoplay muted></video>
+            <p id="status3">not connect</p>
+        </div>
+        <div class="cam">
+            <video id="video4" autoplay muted></video>
+            <p id="status4">not connect</p>
+        </div>
+    </div>
+
+    <script>
+        const CODECS = 'avc1.640029,avc1.64002A,avc1.640033,hvc1.1.6.L153.B0,mp4a.40.2,mp4a.40.5,flac,opus';
+
+        const cameras = [
+            { src: 'cam1', videoId: 'video1', statusId: 'status1' },
+            { src: 'lorong', videoId: 'video2', statusId: 'status2' },
+            { src: 'cam3', videoId: 'video3', statusId: 'status3' },
+            { src: 'cam4', videoId: 'video4', statusId: 'status4' },
+        ];
+
+        async function getToken(streamName) {
+            const res = await fetch(`/token?stream=${streamName}`);
+            if (!res.ok) throw new Error('failed to fetch token');
+            return await res.text();
+        }
+
+        async function createStream(cam) {
+            const video = document.getElementById(cam.videoId);
+            const status = document.getElementById(cam.statusId);
+
+            const state = { sourceBuffer: null, queue: [] };
+
+            let token;
+
+            try {
+                token = (await getToken(cam.src)).trim();
+            } catch (e) {
+                status.textContent = cam.src + ': failed to fetch token';
+                return;
+            }
+
+            const mediaSource = new MediaSource();
+            video.src = URL.createObjectURL(mediaSource);
+
+            mediaSource.addEventListener('sourceopen', () => {
+                status.textContent = cam.src + ': MediaSource open';
+            });
+
+            const ws = new WebSocket(`wss://cam.raflywithme.my.id/api/ws?src=${cam.src}&token=${token}`);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                status.textContent = cam.src + ': connected';
+                ws.send(JSON.stringify({ type: 'mse', value: CODECS }));
+            };
+
+            ws.onerror = (e) => {
+                status.textContent = cam.src + ': error';
+                console.error(cam.src, e);
+            };
+
+            ws.onclose = (e) => {
+                status.textContent = cam.src + ': closed (' + e.code + ')';
+            };
+
+            ws.onmessage = (msg) => {
+                if (typeof msg.data === 'string') {
+                    const data = JSON.parse(msg.data);
+                    if (data.type === 'mse') {
+                        state.sourceBuffer = mediaSource.addSourceBuffer(data.value);
+                        state.sourceBuffer.mode = 'segments';
+                        state.sourceBuffer.addEventListener('updateend', () => pushQueue(state));
+                        status.textContent = cam.src + ': streaming';
+                    }
+                    return;
+                }
+
+                state.queue.push(msg.data);
+                pushQueue(state);
+            };
+        }
+
+        function pushQueue(state) {
+            if (!state.sourceBuffer || state.sourceBuffer.updating || state.queue.length === 0) return;
+            state.sourceBuffer.appendBuffer(state.queue.shift());
+        }
+
+        function startAll() {
+            cameras.forEach(createStream);
+        }
+    </script>
+</body>
+
+</html>
