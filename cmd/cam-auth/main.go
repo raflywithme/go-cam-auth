@@ -12,12 +12,6 @@ import (
 	"cam-auth/internal/handler"
 )
 
-var (
-	secretKey     []byte
-	adminUsername string
-	adminPassword string
-)
-
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Fatal("Fai	led to load .env: ", err)
